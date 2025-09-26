@@ -1,5 +1,8 @@
 # app.py
-import os, unicodedata, threading, logging
+import os
+import unicodedata
+import threading
+import logging
 from flask import Flask, jsonify
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
@@ -35,7 +38,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_document(document=f, caption=SUCCESS_CAPTION)
         except FileNotFoundError:
             logging.error("SECRET_FILE not found: %s", SECRET_FILE)
-            await update.message.reply_text("Файл приза не найден на сервере 😕")
+            await update.message.reply_text("йок")
     else:
         await update.message.reply_text("По пустякам Собако не разговаривает")
 
@@ -43,7 +46,6 @@ def build_bot_app() -> Application:
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
         raise RuntimeError("Переменная TELEGRAM_TOKEN не задана в среде Render.")
-    # для логов не печатаем целиком токен
     logging.info("Starting Telegram bot with token prefix: %s***", token[:10])
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", cmd_start))
@@ -52,7 +54,7 @@ def build_bot_app() -> Application:
     return app
 
 def run_bot():
-    # создаём цикл событий для побочного потока и привязываем его
+    # создаём event loop для побочного потока (обязательно!)
     import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -60,31 +62,26 @@ def run_bot():
     logging.info("BOT: building application…")
     application = build_bot_app()
 
+    async def _before_start(app: Application):
+        try:
+            await app.bot.delete_webhook(drop_pending_updates=True)
+            me = await app.bot.get_me()
+            logging.info("Bot authorized as @%s (id=%s)", me.username, me.id)
+        except Exception as e:
+            logging.exception("Pre-start bot setup failed: %s", e)
+
+    # хук выполнится перед запуском polling
+    application.post_init = _before_start
+
     logging.info("BOT: starting polling…")
-    # теперь в потоке есть event loop, и run_polling отработает нормально
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
-        stop_signals=None,          # мы в отдельном потоке — сигналы ловить нельзя
+        stop_signals=None,       # мы в отдельном потоке — сигналы ловить нельзя
         drop_pending_updates=True,
         poll_interval=1.0,
         timeout=10,
     )
     logging.info("BOT: polling stopped.")
-
-        # Хук перед стартом
-        application.post_init = _before_start  # выполнится до run_polling()
-
-        logging.info("BOT: starting polling…")
-        application.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            stop_signals=None,              # мы в отдельном потоке — сигналы ловить нельзя
-            drop_pending_updates=True,
-            poll_interval=1.0,
-            timeout=10,
-        )
-        logging.info("BOT: polling stopped.")
-    except Exception as e:
-        logging.exception("BOT THREAD CRASHED: %s", e)
 
 # ====== Flask (пинги от аптайм-монитора) ======
 web = Flask(__name__)
@@ -98,7 +95,6 @@ def ping():
     return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
-    # запускаем бота в фоне и HTTP-сервер для /ping
     t = threading.Thread(target=run_bot, daemon=True, name="run_bot")
     t.start()
     logging.info("WEB: starting waitress on port %s", PORT)
