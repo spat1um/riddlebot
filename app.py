@@ -52,17 +52,24 @@ def build_bot_app() -> Application:
     return app
 
 def run_bot():
-    try:
-        application = build_bot_app()
-        # Удаляем вебхук на всякий случай (если когда-то включался)
-        # и запускаем polling в этом потоке
-        async def _before_start(app: Application):
-            try:
-                await app.bot.delete_webhook(drop_pending_updates=True)
-                me = await app.bot.get_me()
-                logging.info("Bot authorized as @%s (id=%s)", me.username, me.id)
-            except Exception as e:
-                logging.exception("Pre-start bot setup failed: %s", e)
+    # создаём цикл событий для побочного потока и привязываем его
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    logging.info("BOT: building application…")
+    application = build_bot_app()
+
+    logging.info("BOT: starting polling…")
+    # теперь в потоке есть event loop, и run_polling отработает нормально
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        stop_signals=None,          # мы в отдельном потоке — сигналы ловить нельзя
+        drop_pending_updates=True,
+        poll_interval=1.0,
+        timeout=10,
+    )
+    logging.info("BOT: polling stopped.")
 
         # Хук перед стартом
         application.post_init = _before_start  # выполнится до run_polling()
